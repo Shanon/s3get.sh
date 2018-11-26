@@ -62,8 +62,8 @@ init_params(){
     fi
     if [ -z "$ACCESS_KEY" -a -z "$SECRET_KEY" ]; then
         if [ -f ~/.aws/credentials ]; then
-            ACCESS_KEY=$(cat ~/.aws/credentials  | grep -P '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_access_key_id" | awk '{print $3}')
-            SECRET_KEY=$(cat ~/.aws/credentials  | grep -P '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_secret_access_key" | awk '{print $3}')
+            ACCESS_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_access_key_id" | awk '{print $3}')
+            SECRET_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_secret_access_key" | awk '{print $3}')
         elif check_role_from_meta; then
             IAM_JSON=$(curl  http://169.254.169.254/latest/meta-data/iam/security-credentials/${ROLE_NAME} --silent)
             ACCESS_KEY=$(echo "$IAM_JSON" | grep '"AccessKeyId"' | sed 's!^.\+Id" : "\([^"]\+\)",.*$!\1!')
@@ -93,7 +93,7 @@ init_params(){
             if [ "$PKEY" != "default" ]; then
                 PKEY="profile $PKEY"
             fi
-            REGION=$(cat ~/.aws/config | grep -P '^(\[|region)' | grep "\[$PKEY\]" -A 1 | grep "^region" | awk '{print $3}')
+            REGION=$(cat ~/.aws/config | grep -E '^(\[|region)' | grep "\[$PKEY\]" -A 1 | grep "^region" | awk '{print $3}')
         elif get_region_from_meta; then
             REGION=$META_REGION
         else
