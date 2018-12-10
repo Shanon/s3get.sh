@@ -23,13 +23,15 @@ Usage: $0 [--profile XXX] [--access-key ID] [--secret-key SECRET_KEY] [--help] O
 
  
  examples
-  s3cp.sh https://s3-ap-northeast-1.amazonaws.com/BUCKET_NAME/path/to/object ./save_object
+  s3get.sh https://s3-ap-northeast-1.amazonaws.com/BUCKET_NAME/path/to/object ./save_object
     load credentials from ~/.aws/credentials ( "default" profile ) or instance meta-data
     download object to ./save_object
-  s3cp.sh -a HOGEHOGE -s MOGEMOGE s3://bucket/path/to/object /path/to/save/object
+  s3get.sh -a HOGEHOGE -s MOGEMOGE s3://bucket/path/to/object /path/to/save/object
     use credentials, AccessKey=HOGEHOGE SecretKey=MOGEMOGE
     load region from ~/.aws/config ( "default" profile ) or instance meta-data
     download from /bucket/path/to/object to /path/to/object
+  s3get.sh s3://bucket/path/to/dir/ ./dest/
+    recursive get to ./dest/dir/
 EOF
     exit 1
 }
@@ -128,15 +130,32 @@ EOF
     exit 1
 }
 
+list_object() {
+    PREFIX=$(echo "$SRC_PATH" | sed 's!^/!!')
+    call_api "GET" "/${BUCKET}" "?list-type=2&prefix=$PREFIX" | grep -o "<Key[^>]*>[^<]*</Key>" | sed -e "s/<Key>\(.*\)<\/Key>/\1/"
+}
+
+get_object() {
+    OBJ_PATH=$1
+    OUT_PATH=$2
+
+    CHECK_RSLT=$(call_api "HEAD" "/${BUCKET}$OBJ_PATH")
+    if echo "$CHECK_RSLT" | grep "200 OK" > /dev/null; then
+        mkdir -p $(dirname $OUT_PATH)
+        call_api "GET" "/${BUCKET}$OBJ_PATH" > $OUT_PATH
+    else
+        err_exit "can not get object $OBJ_PATH $(echo "$CHECK_RSLT" | head -n 1 )"
+    fi
+}
 call_api() {
     METHOD=$1
+    RESOURCE=$2
+    QUERY=$3
     
     DATE_VALUE=$(LC_ALL=C date +'%a, %d %b %Y %H:%M:%S %z')
 
     CURL_OPT=""
-    if [ "$METHOD" == "GET" ]; then
-        CURL_OPT="-o $DST_PATH"
-    elif [ "$METHOD" == "HEAD" ]; then
+    if [ "$METHOD" == "HEAD" ]; then
         CURL_OPT="-I"
     fi
     STR2SIGN="$METHOD
@@ -148,7 +167,7 @@ $DATE_VALUE"
 x-amz-security-token:$TOKEN"
     fi
     STR2SIGN="$STR2SIGN
-/${BUCKET}${SRC_PATH}"
+$RESOURCE"
     SIGNATURE=$(echo -en "$STR2SIGN" | openssl sha1 -hmac ${SECRET_KEY} -binary | base64)
     if [ -n "$TOKEN" ]; then
         curl -H "Host: ${S3_HOST}" \
@@ -157,7 +176,7 @@ x-amz-security-token:$TOKEN"
              -H "x-amz-security-token: $TOKEN" \
              --silent \
              $CURL_OPT \
-             https://${S3_HOST}/${BUCKET}${SRC_PATH}
+             https://${S3_HOST}${RESOURCE}${QUERY}
     else
         curl -H "Host: ${S3_HOST}" \
              -H "Date: ${DATE_VALUE}" \
@@ -165,16 +184,20 @@ x-amz-security-token:$TOKEN"
              -H "x-amz-security-token: $TOKEN" \
              --silent \
              $CURL_OPT \
-             https://${S3_HOST}/${BUCKET}${SRC_PATH}
+             https://${S3_HOST}${RESOURCE}${QUERY}
     fi
 }
 
 main() {
-    CHECK_RSLT=$(call_api "HEAD")
-    if echo "$CHECK_RSLT" | grep "200 OK" > /dev/null; then
-        call_api "GET"
+    if echo "$SRC_PATH" | grep -e '/$' > /dev/null; then
+        list_object | while read LINE; do
+            get_object /$LINE $DST_PATH/$LINE
+        done
     else
-        err_exit "can not get object $(echo "$CHECK_RSLT" | head -n 1 )"
+        if echo "$DST_PATH" | grep -e "/$" > /dev/null; then
+            DST_PATH="$DST_PATH/$(basename $SRC_PATH)"
+        fi
+        get_object $SRC_PATH $DST_PATH
     fi
 }
 
