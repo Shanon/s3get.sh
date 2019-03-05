@@ -132,7 +132,7 @@ EOF
 
 list_object() {
     PREFIX=$(echo "$SRC_PATH" | sed 's!^/!!')
-    call_api "GET" "/${BUCKET}" "?list-type=2&prefix=$PREFIX" | grep -o "<Key[^>]*>[^<]*</Key>" | sed -e "s/<Key>\(.*\)<\/Key>/\1/"
+    call_api "GET" "/${BUCKET}" "?list-type=2&prefix=$PREFIX" | grep -o "<Key[^>]*>[^<]*</Key>" | sed -e "s/<Key>\(.*\)<\/Key>/\1/" | grep -v -P '/$'
 }
 
 get_object() {
@@ -191,7 +191,8 @@ $RESOURCE"
 main() {
     if echo "$SRC_PATH" | grep -e '/$' > /dev/null; then
         list_object | while read LINE; do
-            get_object /$LINE $DST_PATH/$LINE
+            DST_LINE=$(echo "/$LINE" | sed -e "s!$SRC_PATH!!")
+            get_object /$LINE $DST_PATH/$DST_LINE
         done
     else
         if echo "$DST_PATH" | grep -e "/$" > /dev/null; then
