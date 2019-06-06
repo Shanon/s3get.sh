@@ -141,8 +141,12 @@ get_object() {
 
     CHECK_RSLT=$(call_api "HEAD" "/${BUCKET}$OBJ_PATH")
     if echo "$CHECK_RSLT" | grep "200 OK" > /dev/null; then
-        mkdir -p $(dirname $OUT_PATH)
-        call_api "GET" "/${BUCKET}$OBJ_PATH" > $OUT_PATH
+        if [ "$OUT_PATH" = "-" ]; then
+            call_api "GET" "/${BUCKET}$OBJ_PATH"
+        else
+            mkdir -p $(dirname $OUT_PATH)
+            call_api "GET" "/${BUCKET}$OBJ_PATH" > $OUT_PATH
+        fi
     else
         err_exit "can not get object $OBJ_PATH $(echo "$CHECK_RSLT" | head -n 1 )"
     fi
@@ -155,7 +159,7 @@ call_api() {
     DATE_VALUE=$(LC_ALL=C date +'%a, %d %b %Y %H:%M:%S %z')
 
     CURL_OPT=""
-    if [ "$METHOD" == "HEAD" ]; then
+    if [ "$METHOD" = "HEAD" ]; then
         CURL_OPT="-I"
     fi
     STR2SIGN="$METHOD
