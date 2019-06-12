@@ -6,6 +6,7 @@ usage_exit() {
     cat <<EOF
 Usage: $0 [--profile XXX] [--access-key ID] [--secret-key SECRET_KEY] [--help] OBJECT_PATH OUTPUT_PATH
   -p|--proflie     : credential profile. default= "default"
+  -r|--region      : aws region. default= "us-east-1"
   -a|--access-key  : aws access key
   -s|--secret-key  : aws secret key
 
@@ -68,9 +69,9 @@ init_params(){
             SECRET_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_secret_access_key" | awk '{print $3}')
         elif check_role_from_meta; then
             IAM_JSON=$(curl  http://169.254.169.254/latest/meta-data/iam/security-credentials/${ROLE_NAME} --silent)
-            ACCESS_KEY=$(echo "$IAM_JSON" | grep '"AccessKeyId"' | sed 's!^.\+Id" : "\([^"]\+\)",.*$!\1!')
-            SECRET_KEY=$(echo "$IAM_JSON" | grep '"SecretAccessKey"' | sed 's!^.\+Key" : "\([^"]\+\)",.*$!\1!')
-            TOKEN=$(echo "$IAM_JSON" | grep '"Token"' | sed 's!^.\+Token" : "\([^"]\+\)".*$!\1!')
+            ACCESS_KEY=$(/bin/echo "$IAM_JSON" | grep '"AccessKeyId"' | sed 's!^.\+Id" : "\([^"]\+\)",.*$!\1!')
+            SECRET_KEY=$(/bin/echo "$IAM_JSON" | grep '"SecretAccessKey"' | sed 's!^.\+Key" : "\([^"]\+\)",.*$!\1!')
+            TOKEN=$(/bin/echo "$IAM_JSON" | grep '"Token"' | sed 's!^.\+Token" : "\([^"]\+\)".*$!\1!')
         else
             err_exit "can not found ~/.aws/credentials"
         fi
@@ -80,13 +81,25 @@ init_params(){
     fi
 
     if [ -n "$SRC" ]; then
-        if echo "$SRC" | grep "^s3://" > /dev/null; then
-            BUCKET=$(echo "$SRC" | sed 's!^s3://\([^/]\+\)/.\+$!\1!')
-            SRC_PATH=$(echo "$SRC" | sed 's!^s3://[^/]\+\(/.\+\)$!\1!')
-        elif echo "$SRC" | grep "^https\?://" > /dev/null; then
-            S3_HOST=$(echo "$SRC" | sed 's!^https\?://\([^/]\+\)/.\+$!\1!')
-            BUCKET=$(echo "$SRC" | sed 's!^https\?://[^/]\+/\([^/]\+\)/.\+$!\1!')
-            SRC_PATH=$(echo "$SRC" | sed 's!^https\?://[^/]\+/[^/]\+\(/.\+\)$!\1!')
+        if /bin/echo "$SRC" | grep "^s3://" > /dev/null; then
+            BUCKET=$(/bin/echo "$SRC" | sed 's!^s3://\([^/]\+\)/.\+$!\1!')
+            SRC_PATH=$(/bin/echo "$SRC" | sed 's!^s3://[^/]\+\(/.\+\)$!\1!')
+        elif /bin/echo "$SRC" | grep "^https\?://" > /dev/null; then
+            if /bin/echo "$SRC" | grep "^https\?://s3-[^.]\+\.amazonaws\.com/" > /dev/null; then
+                S3_HOST=$(/bin/echo "$SRC" | sed 's!^https\?://\([^/]\+\)/.\+$!\1!')
+                REGION=$(/bin/echo "$SRC" | sed 's!^https\?://s3-\([^.]\+\)\.amazonaws\.com/.\+$!\1!')
+                BUCKET=$(/bin/echo "$SRC" | sed 's!^https\?://[^/]\+/\([^/]\+\)/.\+$!\1!')
+                SRC_PATH=$(/bin/echo "$SRC" | sed 's!^https\?://[^/]\+/[^/]\+\(/.\+\)$!\1!')
+            elif /bin/echo "$SRC" | grep "^https\?://.\+\.s3-[^.]\+\.amazonaws\.com" > /dev/null; then
+                S3_HOST=$(/bin/echo "$SRC" | sed 's!^https\?://\([^/]\+\)/.\+$!\1!')
+                BUCKET=$(/bin/echo "$SRC" | sed 's!^https\?://\(.\+\)\.s3-[^.]\+\.amazonaws\.com/.\+$!\1!')
+                REGION=$(/bin/echo "$SRC" | sed 's!^https\?://.\+\.s3-\([^.]\+\)\.amazonaws\.com/.\+$!\1!')
+                SRC_PATH=$(/bin/echo "$SRC" | sed 's!^https\?://[^/]\+\(/.\+\)$!\1!')
+            else
+                S3_HOST=$(/bin/echo "$SRC" | sed 's!^https\?://\([^/]\+\)/.\+$!\1!')
+                BUCKET=$(/bin/echo "$SRC" | sed 's!^https\?://[^/]\+/\([^/]\+\)/.\+$!\1!')
+                SRC_PATH=$(/bin/echo "$SRC" | sed 's!^https\?://[^/]\+/[^/]\+\(/.\+\)$!\1!')
+            fi
         fi
     fi
     if [ -z "$REGION" ]; then
@@ -98,8 +111,9 @@ init_params(){
             REGION=$(cat ~/.aws/config | grep -E '^(\[|region)' | grep "\[$PKEY\]" -A 1 | grep "^region" | awk '{print $3}')
         elif get_region_from_meta; then
             REGION=$META_REGION
-        else
-            err_exit "can not found ~/.aws/config"
+        fi
+        if [ -z "$REGION" ]; then
+            REGION=us-east-1
         fi
     fi
     if [ -z "$S3_HOST" ]; then
@@ -126,12 +140,12 @@ SRC_PATH   : $SRC_PATH
 DST_PATH   : $DST_PATH
 
 EOF
-    echo "$@" >&2
+    /bin/echo "$@" >&2
     exit 1
 }
 
 list_object() {
-    PREFIX=$(echo "$SRC_PATH" | sed 's!^/!!')
+    PREFIX=$(/bin/echo "$SRC_PATH" | sed 's!^/!!')
     call_api "GET" "/${BUCKET}" "?list-type=2&prefix=$PREFIX" | grep -o "<Key[^>]*>[^<]*</Key>" | sed -e "s/<Key>\(.*\)<\/Key>/\1/" | grep -v -E '/$'
 }
 
@@ -140,7 +154,8 @@ get_object() {
     OUT_PATH=$2
 
     CHECK_RSLT=$(call_api "HEAD" "/${BUCKET}$OBJ_PATH")
-    if echo "$CHECK_RSLT" | grep "200 OK" > /dev/null; then
+
+    if /bin/echo "$CHECK_RSLT" | grep "200 OK" > /dev/null; then
         if [ "$OUT_PATH" = "-" ]; then
             call_api "GET" "/${BUCKET}$OBJ_PATH"
         else
@@ -148,7 +163,7 @@ get_object() {
             call_api "GET" "/${BUCKET}$OBJ_PATH" > $OUT_PATH
         fi
     else
-        err_exit "can not get object $OBJ_PATH $(echo "$CHECK_RSLT" | head -n 1 )"
+        err_exit "can not get object $OBJ_PATH $(/bin/echo "$CHECK_RSLT" | head -n 1 )"
     fi
 }
 call_api() {
@@ -172,7 +187,7 @@ x-amz-security-token:$TOKEN"
     fi
     STR2SIGN="$STR2SIGN
 $RESOURCE"
-    SIGNATURE=$(echo -en "$STR2SIGN" | openssl sha1 -hmac ${SECRET_KEY} -binary | base64)
+    SIGNATURE=$(/bin/echo -en "$STR2SIGN" | openssl sha1 -hmac ${SECRET_KEY} -binary | base64)
     if [ -n "$TOKEN" ]; then
         curl -H "Host: ${S3_HOST}" \
              -H "Date: ${DATE_VALUE}" \
@@ -185,7 +200,6 @@ $RESOURCE"
         curl -H "Host: ${S3_HOST}" \
              -H "Date: ${DATE_VALUE}" \
              -H "Authorization: AWS ${ACCESS_KEY}:${SIGNATURE}" \
-             -H "x-amz-security-token: $TOKEN" \
              --silent \
              $CURL_OPT \
              https://${S3_HOST}${RESOURCE}${QUERY}
@@ -193,13 +207,17 @@ $RESOURCE"
 }
 
 main() {
-    if echo "$SRC_PATH" | grep -e '/$' > /dev/null; then
+    if /bin/echo "$SRC_PATH" | grep -e '/$' > /dev/null; then
+        if [ "$DST_PATH" = "-" ]; then
+            /bin/echo "if get recursive, please set directory path to dest"
+            exit 1
+        fi
         list_object | while read LINE; do
-            DST_LINE=$(echo "/$LINE" | sed -e "s!$SRC_PATH!!")
+            DST_LINE=$(/bin/echo "/$LINE" | sed -e "s!$SRC_PATH!!")
             get_object /$LINE $DST_PATH/$DST_LINE
         done
     else
-        if echo "$DST_PATH" | grep -e "/$" > /dev/null; then
+        if /bin/echo "$DST_PATH" | grep -e "/$" > /dev/null; then
             DST_PATH="$DST_PATH/$(basename $SRC_PATH)"
         fi
         get_object $SRC_PATH $DST_PATH
@@ -211,12 +229,13 @@ PROFILE=""
 ACCESS_KEY=""
 SECRET_KEY=""
 S3_HOST=""
+REGION=""
 SRC_PATH=""
 DST_PATH=""
 
-OPT=$(getopt -o p:a:s:vh --long profile:,access-key:,secret-key:,version,help -- "$@")
+OPT=$(getopt -o p:r:a:s:vh --long profile:,region:,access-key:,secret-key:,version,help -- "$@")
 if [ $? != 0 ]; then
-    echo "$OPT"
+    /bin/echo "$OPT"
     exit 1
 fi
 eval set -- "$OPT"
@@ -227,11 +246,15 @@ for x in "$@"; do
             usage_exit
             ;;
         -v | --version)
-            echo "s3get.sh version ${VERSION}"
+            /bin/echo "s3get.sh version ${VERSION}"
             exit
             ;;
         -p | --profile)
             PROFILE=$2
+            shift 2
+            ;;
+        -r | --region)
+            REGION=$2
             shift 2
             ;;
         -a | --access-key)
