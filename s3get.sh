@@ -1,7 +1,13 @@
 #!/bin/sh
 
-VERSION=0.0.1
+VERSION=0.0.8
+VERBOSE=0
 
+v_msg() {
+    if [ $VERBOSE -gt 0 ]; then
+        echo "$@" 1>&2
+    fi
+}
 usage_exit() {
     cat <<EOF
 Usage: $0 [--profile XXX] [--access-key ID] [--secret-key SECRET_KEY] [--help] OBJECT_PATH OUTPUT_PATH
@@ -38,10 +44,12 @@ EOF
 }
 
 check_role_from_meta() {
+    v_msg "check role from instance metadata"
     ROLE_NAME=$(curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ --silent --connect-timeout 3 | grep '^[a-zA-Z0-9._-]\+$')
 }
 
 get_region_from_meta() {
+    v_msg "get region from instance metadata"
     META_REGION=$(curl http://169.254.169.254/latest/dynamic/instance-identity/document --silent --connect-timeout 3 | grep "region" | sed 's!^.*"region" : "\([^"]\+\)".*$!\1!')
 }
 init_params(){
@@ -65,8 +73,8 @@ init_params(){
     fi
     if [ -z "$ACCESS_KEY" -a -z "$SECRET_KEY" ]; then
         if [ -f ~/.aws/credentials ]; then
-            ACCESS_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_access_key_id" | awk '{print $3}')
-            SECRET_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_secret_access_key" | awk '{print $3}')
+            ACCESS_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_access_key_id" | sed -e 's/=/ /' | awk '{print $2}')
+            SECRET_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_secret_access_key" | sed -e 's/=/ /' | awk '{print $2}')
         elif check_role_from_meta; then
             IAM_JSON=$(curl  http://169.254.169.254/latest/meta-data/iam/security-credentials/${ROLE_NAME} --silent)
             ACCESS_KEY=$(/bin/echo "$IAM_JSON" | grep '"AccessKeyId"' | sed 's!^.\+Id" : "\([^"]\+\)",.*$!\1!')
@@ -108,7 +116,7 @@ init_params(){
             if [ "$PKEY" != "default" ]; then
                 PKEY="profile $PKEY"
             fi
-            REGION=$(cat ~/.aws/config | grep -E '^(\[|region)' | grep "\[$PKEY\]" -A 1 | grep "^region" | awk '{print $3}')
+            REGION=$(cat ~/.aws/config | grep -E '^(\[|region)' | grep "\[$PKEY\]" -A 1 | grep "^region" | sed -e 's/=/ /' | awk '{print $2}')
         elif get_region_from_meta; then
             REGION=$META_REGION
         fi
@@ -146,6 +154,7 @@ EOF
 
 list_object() {
     PREFIX=$(/bin/echo "$SRC_PATH" | sed 's!^/!!')
+    v_msg "list object: $BUCKET / $PREFIX"
     call_api "GET" "/${BUCKET}" "?list-type=2&prefix=$PREFIX" | grep -o "<Key[^>]*>[^<]*</Key>" | sed -e "s/<Key>\(.*\)<\/Key>/\1/" | grep -v -E '/$'
 }
 
@@ -153,6 +162,7 @@ get_object() {
     OBJ_PATH=$1
     OUT_PATH=$2
 
+    v_msg "get object: /$BUCKET/$OBJ_PATH -> $OUT_PATH"
     CHECK_RSLT=$(call_api "HEAD" "/${BUCKET}$OBJ_PATH")
 
     if /bin/echo "$CHECK_RSLT" | grep "200 OK" > /dev/null; then
@@ -233,7 +243,7 @@ REGION=""
 SRC_PATH=""
 DST_PATH=""
 
-OPT=$(getopt -o p:r:a:s:vh --long profile:,region:,access-key:,secret-key:,version,help -- "$@")
+OPT=$(getopt -o p:r:a:s:Vvh --long profile:,region:,access-key:,secret-key:,verbose,version,help -- "$@")
 if [ $? != 0 ]; then
     /bin/echo "$OPT"
     exit 1
@@ -248,6 +258,10 @@ for x in "$@"; do
         -v | --version)
             /bin/echo "s3get.sh version ${VERSION}"
             exit
+            ;;
+        -V | --verbose)
+            VERBOSE=1
+            shift 1
             ;;
         -p | --profile)
             PROFILE=$2
