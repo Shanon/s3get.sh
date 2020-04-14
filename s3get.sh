@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION=0.0.8
+VERSION=0.0.9
 VERBOSE=0
 
 v_msg() {
@@ -11,11 +11,11 @@ v_msg() {
 usage_exit() {
     cat <<EOF
 Usage: $0 [--profile XXX] [--access-key ID] [--secret-key SECRET_KEY] [--help] OBJECT_PATH OUTPUT_PATH
-  -p|--proflie     : credential profile. default= "default"
-  -r|--region      : aws region. default= "us-east-1"
-  -a|--access-key  : aws access key
-  -s|--secret-key  : aws secret key
-
+  -p|--proflie        : credential profile. default= "default"
+  -r|--region         : aws region. default= "us-east-1"
+  -a|--access-key     : aws access key
+  -s|--secret-key     : aws secret key
+  -c|--credential-url : full url for credentiall json
 
   OBJECT_PATH      : download object uri
     https://s3-ap-northeast-1.amazonaws.com/BUCKET_NAME/path/to/object
@@ -43,9 +43,23 @@ EOF
     exit 1
 }
 
-check_role_from_meta() {
-    v_msg "check role from instance metadata"
-    ROLE_NAME=$(curl http://169.254.169.254/latest/meta-data/iam/security-credentials/ --silent --connect-timeout 3 | grep '^[a-zA-Z0-9._-]\+$')
+get_credential_from_meta() {
+    if [ -n "${CREDENTIAL_URL}" ]; then
+        v_msg "get credential from url : $CREDENTIAL_URL"
+        IAM_JUSON=$(curl -L $CREDENTIAL_URL --silent)
+    elif [ -n "${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI}" ]; then
+        local _META_URL="http://169.254.170.2${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI}"
+        v_msg "get credential from task role : $_META_URL"
+        IAM_JSON=$(curl  -L $_META_URL --silent)
+    else
+        local _ROLE_URL="http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+        v_msg "get role name from instance metadata : $_ROLE_URL"
+        ROLE_NAME=$(curl -L $_ROLE_URL --silent --connect-timeout 3 | grep '^[a-zA-Z0-9._-]\+$') && {
+            local _META_URL="http://169.254.169.254/latest/meta-data/iam/security-credentials/${ROLE_NAME}"
+            v_msg "get credential from metadata : $_META_URL"
+            IAM_JSON=$(curl  -L $_META_URL --silent)
+        }
+    fi
 }
 
 get_region_from_meta() {
@@ -75,8 +89,7 @@ init_params(){
         if [ -f ~/.aws/credentials ]; then
             ACCESS_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_access_key_id" | sed -e 's/=/ /' | awk '{print $2}')
             SECRET_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_secret_access_key" | sed -e 's/=/ /' | awk '{print $2}')
-        elif check_role_from_meta; then
-            IAM_JSON=$(curl  http://169.254.169.254/latest/meta-data/iam/security-credentials/${ROLE_NAME} --silent)
+        elif get_credential_from_meta; then
             ACCESS_KEY=$(/bin/echo "$IAM_JSON" | grep '"AccessKeyId"' | sed 's!^.\+Id" : "\([^"]\+\)",.*$!\1!')
             SECRET_KEY=$(/bin/echo "$IAM_JSON" | grep '"SecretAccessKey"' | sed 's!^.\+Key" : "\([^"]\+\)",.*$!\1!')
             TOKEN=$(/bin/echo "$IAM_JSON" | grep '"Token"' | sed 's!^.\+Token" : "\([^"]\+\)".*$!\1!')
@@ -238,12 +251,13 @@ main() {
 PROFILE=""
 ACCESS_KEY=""
 SECRET_KEY=""
+CREDENTIAL_URL=""
 S3_HOST=""
 REGION=""
 SRC_PATH=""
 DST_PATH=""
 
-OPT=$(getopt -o p:r:a:s:Vvh --long profile:,region:,access-key:,secret-key:,verbose,version,help -- "$@")
+OPT=$(getopt -o p:r:a:s:c:Vvh --long profile:,region:,access-key:,secret-key:,credential-url:,verbose,version,help -- "$@")
 if [ $? != 0 ]; then
     /bin/echo "$OPT"
     exit 1
@@ -277,6 +291,10 @@ for x in "$@"; do
             ;;
         -s | --secret-key)
             SECRET_KEY=$2
+            shift 2
+            ;;
+        -c | --credential-url)
+            CREDENTIAL_URL=$2
             shift 2
             ;;
         --)
