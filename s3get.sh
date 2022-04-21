@@ -90,9 +90,9 @@ init_params(){
             ACCESS_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_access_key_id" | sed -e 's/=/ /' | awk '{print $2}')
             SECRET_KEY=$(cat ~/.aws/credentials  | grep -E '^(\[|aws_access_key_id|aws_secret_access_key)' | grep "\[${PROFILE}\]" -A 2 | grep "^aws_secret_access_key" | sed -e 's/=/ /' | awk '{print $2}')
         elif get_credential_from_meta; then
-            ACCESS_KEY=$(/bin/echo "$IAM_JSON" | grep '"AccessKeyId"' | sed 's!^.\+Id" : "\([^"]\+\)",.*$!\1!')
-            SECRET_KEY=$(/bin/echo "$IAM_JSON" | grep '"SecretAccessKey"' | sed 's!^.\+Key" : "\([^"]\+\)",.*$!\1!')
-            TOKEN=$(/bin/echo "$IAM_JSON" | grep '"Token"' | sed 's!^.\+Token" : "\([^"]\+\)".*$!\1!')
+            ACCESS_KEY=$(/bin/echo $IAM_JSON | sed -r 's!.*"AccessKeyId"\s?:\s?"([^"]+).*!\1!')
+            SECRET_KEY=$(/bin/echo $IAM_JSON | sed -r 's!.*"SecretAccessKey"\s?:\s?"([^"]+).*!\1!')
+            TOKEN=$(/bin/echo $IAM_JSON | sed -r 's!.*"Token"\s?:\s?"([^"]+).*!\1!')
         else
             err_exit "can not found ~/.aws/credentials"
         fi
