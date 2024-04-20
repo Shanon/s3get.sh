@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION=0.0.9
+VERSION=0.0.11
 VERBOSE=0
 
 v_msg() {
@@ -43,6 +43,11 @@ EOF
     exit 1
 }
 
+get_metadata_token() {
+    v_msg "get metadata token"
+    METADATA_TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+}
+
 get_credential_from_meta() {
     if [ -n "${CREDENTIAL_URL}" ]; then
         v_msg "get credential from url : $CREDENTIAL_URL"
@@ -52,19 +57,21 @@ get_credential_from_meta() {
         v_msg "get credential from task role : $_META_URL"
         IAM_JSON=$(curl  -L $_META_URL --silent)
     else
+        get_metadata_token
         local _ROLE_URL="http://169.254.169.254/latest/meta-data/iam/security-credentials/"
         v_msg "get role name from instance metadata : $_ROLE_URL"
-        ROLE_NAME=$(curl -L $_ROLE_URL --silent --connect-timeout 3 | grep '^[a-zA-Z0-9._-]\+$') && {
+        ROLE_NAME=$(curl -L -H "X-aws-ec2-metadata-token: $METADATA_TOKEN" $_ROLE_URL --silent --connect-timeout 3 | grep '^[a-zA-Z0-9._-]\+$') && {
             local _META_URL="http://169.254.169.254/latest/meta-data/iam/security-credentials/${ROLE_NAME}"
             v_msg "get credential from metadata : $_META_URL"
-            IAM_JSON=$(curl  -L $_META_URL --silent)
+            IAM_JSON=$(curl -L -H "X-aws-ec2-metadata-token: $METADATA_TOKEN" $_META_URL --silent)
         }
     fi
 }
 
 get_region_from_meta() {
     v_msg "get region from instance metadata"
-    META_REGION=$(curl http://169.254.169.254/latest/dynamic/instance-identity/document --silent --connect-timeout 3 | grep "region" | sed 's!^.*"region" : "\([^"]\+\)".*$!\1!')
+    get_metadata_token
+    META_REGION=$(curl -H "X-aws-ec2-metadata-token: $METADATA_TOKEN" http://169.254.169.254/latest/dynamic/instance-identity/document --silent --connect-timeout 3 | grep "region" | sed 's!^.*"region" : "\([^"]\+\)".*$!\1!')
 }
 init_params(){
     SRC=$1
